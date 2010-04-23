@@ -3,12 +3,12 @@ import MySQLdb
 import MySQLdb.cursors
 import pickle
 import pprint
+import ConfigParser
 
 
-class PoqCtx(object):
+class ArxCtx(object):
 
     OP = {"eq": "=", "ne": "!=", "gt":">", "lt":"<"}
-
 
     __shared_con = None
     args = {"db_name": "poq_demo"}
@@ -16,16 +16,20 @@ class PoqCtx(object):
     
     def __init__(self):
         if self.__shared_con is None:
-            self.__shared_con = MySQLdb.connect(host = "localhost",
-                                                user = "root",
-                                                passwd = "S3n89mk!",
-                                                db = "poq_demo",
+
+            cfg = ConfigParser.RawConfigParser()
+            cfg.read('main.cfg')
+
+            self.__shared_con = MySQLdb.connect(host = cfg.get("db", "host"),
+                                                user = cfg.get("db", "user"),
+                                                passwd = cfg.get("db", "passwd"),
+                                                db = cfg.get("db", "db"),
                                                 cursorclass=MySQLdb.cursors.DictCursor)
 
         self.con = self.__shared_con
 
     def sync(self):
-        pg = PoqGenerator();
+        pg = ArxGenerator();
         pg.generate();
 
 
@@ -53,7 +57,7 @@ class PoqCtx(object):
         except Exception as ex:
             if self.autocommit:
                 self.con.rollback()
-            print("PoqCtx: SQL Exception ----------------------------------------")
+            print("ArxCtx: SQL Exception ----------------------------------------")
             print(ex)
 
         
@@ -74,18 +78,18 @@ class PoqCtx(object):
 
 
 
-class PoqGenerator(object):
+class ArxGenerator(object):
 
     ctx = None
     drv = None
 
     def __init__(self):
-        print("PoqGenerator: __init__")
-        self.ctx = PoqCtx()
-        self.drv = PoqMYSQL()
+        print("ArxGenerator: __init__")
+        self.ctx = ArxCtx()
+        self.drv = ArxMYSQL()
 
     def generate(self):
-        print("PoqGenerator: generate")
+        print("ArxGenerator: generate")
 
         schema = {}
         tables = self.drv.get_tables()
@@ -130,16 +134,16 @@ class PoqGenerator(object):
         self.write(schema)
 
     def write(self, schema):
-        print("PoqGenerator: write")
+        print("ArxGenerator: write")
         pp = pprint.PrettyPrinter(indent=4)
         pp.pprint(schema)
         impl = """
 import pickle
-import poq        
+import arx        
 
-class Poq(object):
+class Arx(object):
     def __getattr__(self, name):
-        cn = \"poq_%s_impl\" % name
+        cn = \"arx_%s_impl\" % name
         return eval(cn+\"()\")
     
 
@@ -149,28 +153,28 @@ class Poq(object):
             impl += """
     def %s(self, *args):
         return %s%s_impl(args)
-""" % (cn, "poq_", cn)
+""" % (cn, "arx_", cn)
 
         for cn, meta in schema.items():
             m = pickle.dumps(meta)
             impl += """
-class %s%s_impl(poq.PoqClass):
+class %s%s_impl(arx.ArxClass):
     _meta_base = \"\"\"%s\"\"\"
     def __init__(self, *args):
-        poq.PoqClass.__init__(self, *args)
+        arx.ArxClass.__init__(self, *args)
 
-""" % ("poq_", cn, m)
+""" % ("arx_", cn, m)
             
         f = open('api.py', 'w')
         f.write(impl)
 
 
-class PoqMYSQL(object):
+class ArxMYSQL(object):
 
     ctx = None
 
     def __init__(self):
-        self.ctx = PoqCtx()
+        self.ctx = ArxCtx()
 
     def get_tables(self):
         result = self.ctx.execute("select TABLE_NAME, CREATE_TIME from information_schema.tables where TABLE_SCHEMA=%(db_name)s;");
@@ -223,7 +227,7 @@ class PoqMYSQL(object):
 
 
 
-class PoqProp(object):
+class ArxProp(object):
     parent = None
     name = None
 
@@ -232,26 +236,26 @@ class PoqProp(object):
         self.name = name
 
     def __str__(self):
-        str = "PoqProp: %s.%s" % ( self.parent._entity,  self.name)
+        str = "ArxProp: %s.%s" % ( self.parent._entity,  self.name)
         if self.parent.is_instnace() and hasattr(self.parent, self.name):
             str += " : %s" % getattr(self.parent, self.name)
         str += ""
         return str
 
     def __eq__(self, other):
-        PoqCond(self.parent, "eq", self, other) 
+        ArxCond(self.parent, "eq", self, other) 
 
     def __ne__(self, other):
-        PoqCond(self.parent, "ne", self, other) 
+        ArxCond(self.parent, "ne", self, other) 
 
     def __lt__(self, other):
-        PoqCond(self.parent, "lt", self, other)
+        ArxCond(self.parent, "lt", self, other)
         
     def __gt__(self, other):
-        PoqCond(self.parent, "gt", self, other) 
+        ArxCond(self.parent, "gt", self, other) 
         
 
-class PoqCond(object):
+class ArxCond(object):
     refs = {}
     args = {}
     parent = None
@@ -267,19 +271,19 @@ class PoqCond(object):
         self.lhs = lhs
         self.rhs = rhs
 
-        if isinstance(self.lhs, PoqProp):
+        if isinstance(self.lhs, ArxProp):
             ls = "%s.%s" % (self.lhs.parent._alias, self.lhs.name)
             self.refs[self.lhs.parent._alias] = self.lhs.parent
         else:
             ls = self.parent.bind(self.lhs)
             
-        if isinstance(self.rhs, PoqProp):
+        if isinstance(self.rhs, ArxProp):
             rs = "%s.%s" % (self.rhs.parent._alias, self.rhs.name)
             self.refs[self.rhs.parent._alias] = self.rhs.parent
         else:
             rs = self.parent.bind(self.rhs)
 
-        self.sql = "%s %s %s" % ( ls, PoqCtx.OP[self.op], rs)
+        self.sql = "%s %s %s" % ( ls, ArxCtx.OP[self.op], rs)
 
         self.parent.add_cond(self)
 
@@ -288,7 +292,7 @@ class PoqCond(object):
 
         
 
-class PoqClass(object):
+class ArxClass(object):
 
     _meta = {}
     _meta_base = {}
@@ -310,7 +314,7 @@ class PoqClass(object):
         return self
 
     def __init__(self, *args): 
-        self.__ctx = PoqCtx()
+        self.__ctx = ArxCtx()
         self._meta = pickle.loads(self._meta_base)
         self._entity = self._meta["table"]
         self._alias = "_"  + self._entity.__str__()
@@ -318,7 +322,7 @@ class PoqClass(object):
         self._refs[self._alias] = self
         
         for obj in self._meta["var"]:
-            self.__fields[obj["name"]] = PoqProp(self, obj["name"])
+            self.__fields[obj["name"]] = ArxProp(self, obj["name"])
             
             load = None
             for arg in args:
@@ -389,7 +393,7 @@ class PoqClass(object):
         str = ""
         sep = ""
         for n, f in self.__fields.items():
-            if not isinstance(f, PoqProp):
+            if not isinstance(f, ArxProp):
                 m = self.bind(f)
                 if use_alias:
                     str += " %s %s.%s = %s" % (sep, self._alias, n, m)
@@ -426,7 +430,7 @@ class PoqClass(object):
             self.__fields[name] = value
             
     def __str__(self) :
-        str = "PoqClass %s \n" % (self._entity)
+        str = "ArxClass %s \n" % (self._entity)
         for n, f in self.__fields.items():
             str += "  %s \n" % f
         return str
